@@ -32,10 +32,13 @@ class EncodingProcess:
         sys.stdout.write("\033\n")
         sys.stdout.write("\033\n")
         sys.stdout.write("\033\n")
+        self.updateDisplay()
+        filter_list = [f"{self.crop}" if self.crop else None, "select='gt(scene,0.4)',showinfo"]
+        filter_str = ",".join(f for f in filter_list if f)
         scene_detection_process = subprocess.Popen(
             [
                 "ffmpeg", "-i", self.source, "-nostdin",
-                "-filter:v", "select='gt(scene,0.4)',showinfo",
+                "-filter:v", filter_str,
                 "-f", "null", "-"
             ],
             stderr=subprocess.PIPE,
