@@ -18,9 +18,9 @@ def main():
     parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
     parser.add_argument("-w", type=int, help="Set the number of workers. Default is 4. not working yet.", metavar="N")
     # autocrop, resolution limit
-    parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=True,
+    parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=False,
                         help="Enable or disable automatic cropping. not working yet.")
-    parser.add_argument("--findstart", action=argparse.BooleanOptionalAction, default=True,
+    parser.add_argument("--findstart", action=argparse.BooleanOptionalAction, default=False,
                         help="Automatically find the start of the video using audio and video analysis.")
     parser.add_argument("--res", type=resolution_type,
                         help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis. not working yet.", metavar="WxH")
@@ -46,7 +46,13 @@ def main():
         fps = float(fps)
 
     resolution = video.get_output_resolution(args.i, crop, args.res)
-    process = EncodingProcess(args.i, args.o, crop, resolution, start, length, fps, hdr)
+
+    if args.w:
+        workers = max(args.w, 1)
+    else:
+        workers = 1
+
+    process = EncodingProcess(args.i, args.o, workers, crop, resolution, start, length, fps, hdr)
     process.start()
 
 

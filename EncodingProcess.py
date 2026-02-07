@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 class EncodingProcess:
 
-    def __init__(self, source, destination, crop, resolution, start_time, length, source_fps, hdr):
+    def __init__(self, source, destination, workers, crop, resolution, start_time, length, source_fps, hdr):
         self.source = source
         self.destination = destination
         self.crop = crop
@@ -18,7 +18,7 @@ class EncodingProcess:
         self.length = length
         self.source_fps = source_fps
         self.hdr = hdr
-        self.max_workers = 4
+        self.max_workers = workers
         self.processing_start_time = time.time()
         # variables
         self.active_workers = 0
@@ -99,8 +99,14 @@ class EncodingProcess:
             self.updateDisplay()
 
     def worker(self, scene):
+        x, y = self.resolution
+        if self.crop:
+            filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
+        else:
+            filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
         subprocess.run(
             ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
+             "-filter_complex", filter_complex, "-an", "-map", "[v]",
              "-c:v", "libsvtav1", "-preset", "8", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
         )
         self.scenes.remove(scene)
