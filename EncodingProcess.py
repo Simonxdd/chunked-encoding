@@ -21,7 +21,6 @@ class EncodingProcess:
         self.max_workers = workers
         self.processing_start_time = time.time()
         # variables
-        self.active_workers = 0
         self.progress = 0.0
         self.fps = 0.0
         self.eta = None
@@ -29,19 +28,52 @@ class EncodingProcess:
         self.scenes = [Scene(start_time)]
 
     def start(self):
-        sys.stdout.write("\033\n")
-        sys.stdout.write("\033\n")
-        self.updateDisplay()
+        try:
+            scene_detection = threading.Thread(target=self.scene_detection)
+            scene_detection.daemon = True
+            scene_detection.start()
+
+            worker_threads = []
+            for i in range(0, self.max_workers):
+                t = threading.Thread(target=self.worker, args=(scene_detection,))
+                t.daemon = True
+                t.start()
+                worker_threads.append(t)
+
+            ui_thread = threading.Thread(target=self.update_display, args=(worker_threads,))
+            ui_thread.daemon = True
+            ui_thread.start()
+
+            while scene_detection.is_alive():
+                scene_detection.join(timeout=1)
+            for t in worker_threads:
+                while t.is_alive():
+                    t.join(timeout=1)
+            self.mux()
+            while ui_thread.is_alive():
+                ui_thread.join(timeout=1)
+        except KeyboardInterrupt:
+            for scene in self.scenes:
+                scene.done_processing = True
+            while True:
+                try:
+                    for filename in os.listdir("chunks"):
+                        if filename.endswith(".mp4"):
+                            os.remove(os.path.join("chunks", filename))
+                    sys.exit(0)
+                except Exception as e:
+                    pass # ignore exceptions lol, fix later
+
+
+    def scene_detection(self):
         if self.crop:
-            filter_str = self.crop + "select='gt(scene,0.4)',showinfo"
+            filter_str = self.crop + ",select='gt(scene,0.3)',showinfo"
         else:
-            filter_str = "select='gt(scene,0.4)',showinfo"
-        #filter_list = [f"{self.crop}" if self.crop else None, "select='gt(scene,0.4)',showinfo"]
-        #filter_str = ",".join(f for f in filter_list if f)
+            filter_str = "select='gt(scene,0.3)',showinfo"
         scene_detection_process = subprocess.Popen(
             [
                 "ffmpeg", "-i", self.source, "-nostdin",
-                "-filter:v", "select='gt(scene,0.4)',showinfo",
+                "-filter:v", filter_str,
                 "-f", "null", "-"
             ],
             stderr=subprocess.PIPE,
@@ -55,77 +87,63 @@ class EncodingProcess:
                     match = re.search(r"pts_time:(\d+\.\d+)", line)
                     if match:
                         timestamp = float(match.group(1))
-                        self.process_timestamp(timestamp)
+                        idx = len(self.scenes) - 1
+                        if timestamp > self.content_start_time:
+                            self.scenes[idx].end_scene(timestamp)
+                            self.scenes.append(Scene(timestamp))
+                            if not self.scenes[idx].get_length() > 1.0:
+                                self.scenes[idx].end_scene(None)
+                                self.scenes.pop(idx + 1)
         finally:
             scene_detection_process.stderr.close()
             scene_detection_process.wait()
             self.scenes[len(self.scenes)-1].end_scene(self.length)
-        # bad busy waiting
-        while any(not scene.done_processing for scene in self.scenes):
-            self.update()
-            if self.active_workers == self.max_workers:
-                time.sleep(1)
-        self.update()
-        self.mux()
 
-    def process_timestamp(self, timestamp):
-        idx = len(self.scenes) - 1
-        if timestamp > self.content_start_time:
-            self.scenes[idx].end_scene(timestamp)
-            self.scenes.append(Scene(timestamp))
-            if not self.scenes[idx].get_length() > 1.0:
-                self.scenes[idx].end_scene(None)
-                self.scenes.pop(idx+1)
-            self.update()
-
-    def update(self):
-        sorted_scenes = sorted(
-            [s for s in self.scenes if s.is_complete() and not s.is_processing and not s.done_processing],
-            key=lambda scene: scene.get_length(), reverse=True
-        )
-        if len(sorted_scenes) > 0:
-            scene = sorted_scenes[0]
-            if self.active_workers < self.max_workers:
-                self.active_workers = self.active_workers + 1
+    def worker(self, scd_thread):
+        while scd_thread.is_alive() or any(not scene.done_processing for scene in self.scenes):
+            sorted_scenes = sorted(
+                [s for s in self.scenes if s.is_complete() and not s.is_processing and not s.done_processing],
+                key=lambda scene: scene.get_length(), reverse=True
+            )
+            if len(sorted_scenes) > 0:
+                scene = sorted_scenes[0]
                 scene.is_processing = True
-                t = threading.Thread(target=self.worker, args=(scene,))
-                t.daemon = True
-                t.start()
+                x, y = self.resolution
+                if self.crop:
+                    filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
+                else:
+                    filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
+                subprocess.run(
+                    ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
+                     "-filter_complex", filter_complex, "-an", "-map", "[v]",
+                     "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
+                )
+                scene.done_processing = True
 
-        if any(scene.done_processing for scene in self.scenes):
+    def update_display(self, worker_threads):
+        sys.stdout.write("\033\n")
+        sys.stdout.write("\033\n")
+        while True:
+            alive_threads = sum(1 for t in worker_threads if t.is_alive())
             finished_length = sum(s.get_length() for s in self.scenes if s.done_processing)
-            self.progress = min(finished_length/self.length,1.0)
-            self.fps = (finished_length/(time.time() - self.processing_start_time))*self.source_fps
+            self.progress = min(finished_length / self.length, 1.0)
+            self.fps = (finished_length / (time.time() - self.processing_start_time)) * self.source_fps
             if self.fps > 0:
                 self.eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - finished_length)*self.source_fps)/self.fps),0)))
-
-        self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - self.processing_start_time))
-        self.updateDisplay()
-
-    def worker(self, scene):
-        x, y = self.resolution
-        if self.crop:
-            filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
-        else:
-            filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
-        subprocess.run(
-            ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
-             "-filter_complex", filter_complex, "-an", "-map", "[v]",
-             "-c:v", "libsvtav1", "-preset", "8", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
-        )
-        scene.done_processing = True
-        self.active_workers = self.active_workers - 1
-
-    def updateDisplay(self):
-        sys.stdout.write("\033[F" * 2)
-        sys.stdout.write(f"\033[KQueue {len(self.scenes)} Workers {self.active_workers}/{self.max_workers} ")
-        sys.stdout.write(f"\033[K{self.resolution[0]}x{self.resolution[1]} {'HDR' if self.hdr else 'SDR'}\n")
-        bar_width = 60
-        filled = int(self.progress / 1.0 * bar_width)
-        bar = "#" * filled + ">" + "-" * (bar_width - filled - 1)
-        line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(self.progress*100,1)}% {round(self.fps,1)} fps, eta {self.eta}"
-        sys.stdout.write(f"\033[K{line}\n")
-        sys.stdout.flush()
+            self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - self.processing_start_time))
+            sys.stdout.write("\033[F" * 2)
+            sys.stdout.write(f"\033[KScenes {sum(1 for s in self.scenes if s.done_processing)}/{len(self.scenes)} Workers {alive_threads} ")
+            sys.stdout.write(f"\033[K{self.resolution[0]}x{self.resolution[1]} {'HDR' if self.hdr else 'SDR'}\n")
+            bar_width = 60
+            filled = int(self.progress / 1.0 * bar_width)
+            bar = "#" * filled + ">" + "-" * (bar_width - filled - 1)
+            line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(self.progress*100,1)}% {round(self.fps,1)} fps, eta {self.eta}"
+            sys.stdout.write(f"\033[K{line}\n")
+            sys.stdout.flush()
+            time.sleep(1)
+            if not any(not scene.done_processing for scene in self.scenes):
+                if alive_threads < 1:
+                    break
 
     def mux(self):
         file_names = []
