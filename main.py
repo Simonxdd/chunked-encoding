@@ -16,14 +16,14 @@ def main():
     # input/output
     parser.add_argument("-i", help="Path to the input file.", type=valid_path, required=True, metavar="FILE")
     parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
-    parser.add_argument("-w", type=int, help="Set the number of workers. Default is 4. not working yet.", metavar="N")
+    parser.add_argument("-w", type=int, help="Set the number of workers. Default is 4.", metavar="N")
     # autocrop, resolution limit
     parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=False,
-                        help="Enable or disable automatic cropping. not working yet.")
+                        help="Enable or disable automatic cropping.")
     parser.add_argument("--findstart", action=argparse.BooleanOptionalAction, default=False,
                         help="Automatically find the start of the video using audio and video analysis.")
     parser.add_argument("--res", type=resolution_type,
-                        help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis. not working yet.", metavar="WxH")
+                        help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis.", metavar="WxH")
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):

@@ -6,6 +6,7 @@ from Scene import *
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor
+from SceneManager import SceneManager
 
 class EncodingProcess:
 
@@ -19,28 +20,24 @@ class EncodingProcess:
         self.source_fps = source_fps
         self.hdr = hdr
         self.max_workers = workers
-        self.processing_start_time = time.time()
         # variables
-        self.progress = 0.0
-        self.fps = 0.0
-        self.eta = None
         self.passed_time = "--:--:--"
-        self.scenes = [Scene(start_time)]
 
     def start(self):
+        scene_manager = SceneManager(self.content_start_time)
         try:
-            scene_detection = threading.Thread(target=self.scene_detection)
+            scene_detection = threading.Thread(target=self.scene_detection, args=(scene_manager,))
             scene_detection.daemon = True
             scene_detection.start()
 
             worker_threads = []
             for i in range(0, self.max_workers):
-                t = threading.Thread(target=self.worker, args=(scene_detection,))
+                t = threading.Thread(target=self.worker, args=(scene_manager,))
                 t.daemon = True
                 t.start()
                 worker_threads.append(t)
 
-            ui_thread = threading.Thread(target=self.update_display, args=(worker_threads,))
+            ui_thread = threading.Thread(target=self.update_display, args=(worker_threads, scene_manager,))
             ui_thread.daemon = True
             ui_thread.start()
 
@@ -53,7 +50,7 @@ class EncodingProcess:
             while ui_thread.is_alive():
                 ui_thread.join(timeout=1)
         except KeyboardInterrupt:
-            for scene in self.scenes:
+            for scene in scene_manager.scenes:
                 scene.done_processing = True
             while True:
                 try:
@@ -64,8 +61,7 @@ class EncodingProcess:
                 except Exception as e:
                     pass # ignore exceptions lol, fix later
 
-
-    def scene_detection(self):
+    def scene_detection(self, scene_manager):
         if self.crop:
             filter_str = self.crop + ",select='gt(scene,0.3)',showinfo"
         else:
@@ -87,61 +83,56 @@ class EncodingProcess:
                     match = re.search(r"pts_time:(\d+\.\d+)", line)
                     if match:
                         timestamp = float(match.group(1))
-                        idx = len(self.scenes) - 1
                         if timestamp > self.content_start_time:
-                            self.scenes[idx].end_scene(timestamp)
-                            self.scenes.append(Scene(timestamp))
-                            if not self.scenes[idx].get_length() > 1.0:
-                                self.scenes[idx].end_scene(None)
-                                self.scenes.pop(idx + 1)
+                            scene_manager.add_scene(timestamp)
         finally:
             scene_detection_process.stderr.close()
             scene_detection_process.wait()
-            self.scenes[len(self.scenes)-1].end_scene(self.length)
+            scene_manager.finish_last_scene(self.length)
 
-    def worker(self, scd_thread):
-        while scd_thread.is_alive() or any(not scene.done_processing for scene in self.scenes):
-            sorted_scenes = sorted(
-                [s for s in self.scenes if s.is_complete() and not s.is_processing and not s.done_processing],
-                key=lambda scene: scene.get_length(), reverse=True
+    def worker(self, scene_manager):
+        while True:
+            scene = scene_manager.request_scene()
+            if scene is None:
+                break
+            x, y = self.resolution
+            if self.crop:
+                filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
+            else:
+                filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
+            subprocess.run(
+                ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
+                 "-filter_complex", filter_complex, "-an", "-map", "[v]",
+                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
             )
-            if len(sorted_scenes) > 0:
-                scene = sorted_scenes[0]
-                scene.is_processing = True
-                x, y = self.resolution
-                if self.crop:
-                    filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
-                else:
-                    filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
-                subprocess.run(
-                    ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
-                     "-filter_complex", filter_complex, "-an", "-map", "[v]",
-                     "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
-                )
-                scene.done_processing = True
+            scene_manager.scene_finished(scene)
 
-    def update_display(self, worker_threads):
+    def update_display(self, worker_threads, scene_manager):
         sys.stdout.write("\033\n")
         sys.stdout.write("\033\n")
         while True:
+            scenes = scene_manager.scenes
             alive_threads = sum(1 for t in worker_threads if t.is_alive())
-            finished_length = sum(s.get_length() for s in self.scenes if s.done_processing)
-            self.progress = min(finished_length / self.length, 1.0)
-            self.fps = (finished_length / (time.time() - self.processing_start_time)) * self.source_fps
-            if self.fps > 0:
-                self.eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - finished_length)*self.source_fps)/self.fps),0)))
-            self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - self.processing_start_time))
+            finished_length = sum(s.get_length() for s in scenes if s.done_processing)
+            progress = min(finished_length / self.length, 1.0)
+            if scene_manager.most_recent_timestamp:
+                fps = (finished_length / (scene_manager.most_recent_timestamp - scene_manager.start_timestamp)) * self.source_fps
+                eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - finished_length) * self.source_fps) / fps), 0)))
+            else:
+                fps = 0
+                eta = "--:--:--"
+            self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - scene_manager.start_timestamp))
             sys.stdout.write("\033[F" * 2)
-            sys.stdout.write(f"\033[KScenes {sum(1 for s in self.scenes if s.done_processing)}/{len(self.scenes)} Workers {alive_threads} ")
+            sys.stdout.write(f"\033[KScenes {sum(1 for s in scenes if s.done_processing)}/{len(scenes)} Workers {alive_threads} ")
             sys.stdout.write(f"\033[K{self.resolution[0]}x{self.resolution[1]} {'HDR' if self.hdr else 'SDR'}\n")
             bar_width = 60
-            filled = int(self.progress / 1.0 * bar_width)
+            filled = int(progress / 1.0 * bar_width)
             bar = "#" * filled + ">" + "-" * (bar_width - filled - 1)
-            line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(self.progress*100,1)}% {round(self.fps,1)} fps, eta {self.eta}"
+            line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(progress*100,1)}% {round(fps,1)} fps, eta {eta}"
             sys.stdout.write(f"\033[K{line}\n")
             sys.stdout.flush()
             time.sleep(1)
-            if not any(not scene.done_processing for scene in self.scenes):
+            if not any(not scene.done_processing for scene in scenes):
                 if alive_threads < 1:
                     break
 
@@ -157,7 +148,7 @@ class EncodingProcess:
 
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-loglevel", "fatal",
-            "-i", "chunks/inputs.txt",
+            "-i", "chunks/inputs.txt", "-ss", str(self.content_start_time),
             "-i", self.source, "-map", "0:v:0",
             "-c:v", "copy",
             "-map", "1:a:0", "-c:a", "libopus", "-b:a", "96k", self.destination

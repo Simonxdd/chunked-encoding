@@ -16,9 +16,3 @@ class Scene:
             return self.end - self.start
         else:
             return float("inf")
-
-    def update_processing_state(self, arg):
-        self.is_processing = arg
-
-    def get_processing_state(self):
-        return self.is_processing
