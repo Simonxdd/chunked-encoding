@@ -31,14 +31,17 @@ class EncodingProcess:
     def start(self):
         sys.stdout.write("\033\n")
         sys.stdout.write("\033\n")
-        sys.stdout.write("\033\n")
         self.updateDisplay()
-        filter_list = [f"{self.crop}" if self.crop else None, "select='gt(scene,0.4)',showinfo"]
-        filter_str = ",".join(f for f in filter_list if f)
+        if self.crop:
+            filter_str = self.crop + "select='gt(scene,0.4)',showinfo"
+        else:
+            filter_str = "select='gt(scene,0.4)',showinfo"
+        #filter_list = [f"{self.crop}" if self.crop else None, "select='gt(scene,0.4)',showinfo"]
+        #filter_str = ",".join(f for f in filter_list if f)
         scene_detection_process = subprocess.Popen(
             [
                 "ffmpeg", "-i", self.source, "-nostdin",
-                "-filter:v", filter_str,
+                "-filter:v", "select='gt(scene,0.4)',showinfo",
                 "-f", "null", "-"
             ],
             stderr=subprocess.PIPE,
@@ -58,10 +61,10 @@ class EncodingProcess:
             scene_detection_process.wait()
             self.scenes[len(self.scenes)-1].end_scene(self.length)
         # bad busy waiting
-        while len(self.scenes) > 0:
-            while (self.active_workers < self.max_workers) & len(self.scenes) > 0:
-                self.update()
-            time.sleep(1)
+        while any(not scene.done_processing for scene in self.scenes):
+            self.update()
+            if self.active_workers == self.max_workers:
+                time.sleep(1)
         self.update()
         self.mux()
 
@@ -77,8 +80,7 @@ class EncodingProcess:
 
     def update(self):
         sorted_scenes = sorted(
-            [s for s in self.scenes if s.is_complete() and not
-             s.is_processing],
+            [s for s in self.scenes if s.is_complete() and not s.is_processing and not s.done_processing],
             key=lambda scene: scene.get_length(), reverse=True
         )
         if len(sorted_scenes) > 0:
@@ -89,17 +91,16 @@ class EncodingProcess:
                 t = threading.Thread(target=self.worker, args=(scene,))
                 t.daemon = True
                 t.start()
-        if len(self.scenes) > 0:
-            if self.scenes[len(self.scenes)-1].is_complete():
-                remaining_length = sum(s.get_length() for s in self.scenes if s.is_complete())
-                self.progress = min((self.length - remaining_length)/self.length,1.0)
-                self.fps = ((self.progress*self.length)/(time.time() - self.processing_start_time))*self.source_fps
-                if self.fps > 0:
-                    self.eta = time.strftime('%H:%M:%S', time.gmtime(round(((remaining_length*self.source_fps)/self.fps),0)))
-                self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time()-self.processing_start_time))
-            else:
-                self.progress = 0.0
-            self.updateDisplay()
+
+        if any(scene.done_processing for scene in self.scenes):
+            finished_length = sum(s.get_length() for s in self.scenes if s.done_processing)
+            self.progress = min(finished_length/self.length,1.0)
+            self.fps = (finished_length/(time.time() - self.processing_start_time))*self.source_fps
+            if self.fps > 0:
+                self.eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - finished_length)*self.source_fps)/self.fps),0)))
+
+        self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - self.processing_start_time))
+        self.updateDisplay()
 
     def worker(self, scene):
         x, y = self.resolution
@@ -112,12 +113,12 @@ class EncodingProcess:
              "-filter_complex", filter_complex, "-an", "-map", "[v]",
              "-c:v", "libsvtav1", "-preset", "8", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
         )
-        self.scenes.remove(scene)
+        scene.done_processing = True
         self.active_workers = self.active_workers - 1
 
     def updateDisplay(self):
-        sys.stdout.write("\033[F" * 3)
-        sys.stdout.write(f"\033[KQueue {len(self.scenes)} Workers {self.active_workers}/{self.max_workers}\n")
+        sys.stdout.write("\033[F" * 2)
+        sys.stdout.write(f"\033[KQueue {len(self.scenes)} Workers {self.active_workers}/{self.max_workers} ")
         sys.stdout.write(f"\033[K{self.resolution[0]}x{self.resolution[1]} {'HDR' if self.hdr else 'SDR'}\n")
         bar_width = 60
         filled = int(self.progress / 1.0 * bar_width)

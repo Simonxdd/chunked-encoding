@@ -3,6 +3,7 @@ class Scene:
         self.start = start
         self.end = None
         self.is_processing = False
+        self.done_processing = False
 
     def end_scene(self, end):
         self.end = end
