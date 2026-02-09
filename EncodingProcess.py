@@ -1,5 +1,6 @@
 import subprocess
 import threading
+import signal
 import sys
 import re
 from pathlib import Path
@@ -22,29 +23,29 @@ class EncodingProcess:
         self.source_fps = source_fps
         self.hdr = hdr
         self.max_workers = workers
+        self.stop_event = threading.Event()
         # variables
         self.passed_time = "--:--:--"
 
     def start(self):
         scene_manager = SceneManager(self.temp_location, self.content_start_time)
+        worker_threads = []
+        scene_detection_thread = threading.Thread(target=self.scene_detection, args=(scene_manager,))
+        scene_detection_thread.daemon = True
+        ui_thread = threading.Thread(target=self.update_display, args=(worker_threads, scene_manager,))
         try:
-            scene_detection = threading.Thread(target=self.scene_detection, args=(scene_manager,))
-            scene_detection.daemon = True
-            scene_detection.start()
+            if not scene_manager.scd_finished:
+                scene_detection_thread.start()
 
-            worker_threads = []
             for i in range(0, self.max_workers):
                 t = threading.Thread(target=self.worker, args=(scene_manager,))
-                t.daemon = True
                 t.start()
                 worker_threads.append(t)
 
-            ui_thread = threading.Thread(target=self.update_display, args=(worker_threads, scene_manager,))
-            ui_thread.daemon = True
             ui_thread.start()
 
-            while scene_detection.is_alive():
-                scene_detection.join(timeout=1)
+            while scene_detection_thread.is_alive():
+                scene_detection_thread.join(timeout=1)
             for t in worker_threads:
                 while t.is_alive():
                     t.join(timeout=1)
@@ -52,7 +53,12 @@ class EncodingProcess:
             while ui_thread.is_alive():
                 ui_thread.join(timeout=1)
         except KeyboardInterrupt:
-            sys.exit(0)
+            self.stop_event.set()
+            while ui_thread.is_alive():
+                ui_thread.join(timeout=1)
+            print("Shutting down... Please consider the temp folder or restart to resume.")
+            for t in worker_threads:
+                t.join(timeout=1)
 
     def scene_detection(self, scene_manager):
         if self.crop:
@@ -84,7 +90,7 @@ class EncodingProcess:
             scene_manager.finish_last_scene(self.length)
 
     def worker(self, scene_manager):
-        while True:
+        while not self.stop_event.is_set():
             scene, index = scene_manager.request_scene()
             if scene is None:
                 break
@@ -93,18 +99,22 @@ class EncodingProcess:
                 filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
             else:
                 filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
-            subprocess.run(
-                ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin",
+                 "-loglevel", "fatal",
                  "-filter_complex", filter_complex, "-an", "-map", "[v]",
-                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"{self.temp_location / str(index)}.mp4"], capture_output=True
+                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le",
+                 f"{self.temp_location / str(index)}.mp4"], capture_output=True
             )
-            scene_manager.scene_finished(scene)
+            if result.returncode == 0:
+                scene_manager.scene_finished(scene)
 
     def update_display(self, worker_threads, scene_manager):
         sys.stdout.write("\033\n")
         sys.stdout.write("\033\n")
-        while True:
+        while not self.stop_event.wait(1):
             scenes = scene_manager.scenes
+            all_scenes_done_processing = not any(not scene.done_processing for scene in scenes)
             alive_threads = sum(1 for t in worker_threads if t.is_alive())
             total_processed_length = sum(s.get_length() for s in scenes if s.done_processing)
             progress = min(total_processed_length / self.length, 1.0)
@@ -124,8 +134,7 @@ class EncodingProcess:
             line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(progress*100,1)}% {round(fps,1)} fps, eta {eta}"
             sys.stdout.write(f"\033[K{line}\n")
             sys.stdout.flush()
-            time.sleep(1)
-            if not any(not scene.done_processing for scene in scenes):
+            if all_scenes_done_processing:
                 if alive_threads < 1:
                     break
 

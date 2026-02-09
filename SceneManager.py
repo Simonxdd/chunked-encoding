@@ -73,6 +73,10 @@ class SceneManager:
         with open(self.temp_location / filename, "r", encoding="utf-8") as f:
             serialized = json.load(f)
             self.scenes = [Scene.deserialize(item) for item in serialized]
+            self.scd_finished = True
+            for scene in self.scenes:
+                if not scene.done_processing and scene.is_processing:
+                    scene.is_processing = False
 
     def clean_up(self):
         os.remove(self.temp_location / filename)
