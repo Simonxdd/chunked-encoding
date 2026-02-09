@@ -16,3 +16,13 @@ class Scene:
             return self.end - self.start
         else:
             return float("inf")
+
+    def serialize(self):
+        return self.__dict__
+
+    @classmethod
+    def deserialize(cls, data):
+        start_value = data.pop('start')
+        instance = cls(start_value)
+        instance.__dict__.update(data)
+        return instance

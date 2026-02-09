@@ -2,6 +2,7 @@ import subprocess
 import threading
 import sys
 import re
+from pathlib import Path
 from Scene import *
 import time
 import os
@@ -10,9 +11,10 @@ from SceneManager import SceneManager
 
 class EncodingProcess:
 
-    def __init__(self, source, destination, workers, crop, resolution, start_time, length, source_fps, hdr):
+    def __init__(self, source, destination, temp_location, workers, crop, resolution, start_time, length, source_fps, hdr):
         self.source = source
         self.destination = destination
+        self.temp_location = Path(temp_location)
         self.crop = crop
         self.resolution = resolution
         self.content_start_time = start_time
@@ -24,7 +26,7 @@ class EncodingProcess:
         self.passed_time = "--:--:--"
 
     def start(self):
-        scene_manager = SceneManager(self.content_start_time)
+        scene_manager = SceneManager(self.temp_location, self.content_start_time)
         try:
             scene_detection = threading.Thread(target=self.scene_detection, args=(scene_manager,))
             scene_detection.daemon = True
@@ -46,20 +48,11 @@ class EncodingProcess:
             for t in worker_threads:
                 while t.is_alive():
                     t.join(timeout=1)
-            self.mux()
+            self.mux(scene_manager)
             while ui_thread.is_alive():
                 ui_thread.join(timeout=1)
         except KeyboardInterrupt:
-            for scene in scene_manager.scenes:
-                scene.done_processing = True
-            while True:
-                try:
-                    for filename in os.listdir("chunks"):
-                        if filename.endswith(".mp4"):
-                            os.remove(os.path.join("chunks", filename))
-                    sys.exit(0)
-                except Exception as e:
-                    pass # ignore exceptions lol, fix later
+            sys.exit(0)
 
     def scene_detection(self, scene_manager):
         if self.crop:
@@ -92,7 +85,7 @@ class EncodingProcess:
 
     def worker(self, scene_manager):
         while True:
-            scene = scene_manager.request_scene()
+            scene, index = scene_manager.request_scene()
             if scene is None:
                 break
             x, y = self.resolution
@@ -101,9 +94,9 @@ class EncodingProcess:
             else:
                 filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
             subprocess.run(
-                ["ffmpeg", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
+                ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin", "-loglevel", "fatal",
                  "-filter_complex", filter_complex, "-an", "-map", "[v]",
-                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"chunks/{str(scene.start)}.mp4"], capture_output=True
+                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le", f"{self.temp_location / str(index)}.mp4"], capture_output=True
             )
             scene_manager.scene_finished(scene)
 
@@ -136,26 +129,25 @@ class EncodingProcess:
                 if alive_threads < 1:
                     break
 
-    def mux(self):
-        file_names = []
-        for filename in os.listdir("chunks"):
-            if filename.endswith(".mp4"):
-                file_names.append(filename)
-        file_names.sort(key=lambda f: float(f.replace(".mp4", "")))
-        with open('chunks/inputs.txt', 'w') as f:
-            for filename in file_names:
-                f.write(f"file '{filename}'\n")
+    def mux(self, scene_manager):
+        file_name = "videos.txt"
+        with open(self.temp_location / file_name, 'w') as f:
+            for index, scene in enumerate(scene_manager.scenes):
+                f.write(f"file '{index}.mp4'\n")
 
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-loglevel", "fatal",
-            "-i", "chunks/inputs.txt", "-ss", str(self.content_start_time),
+            "-i", self.temp_location / file_name, "-ss", str(self.content_start_time),
             "-i", self.source, "-map", "0:v:0",
             "-c:v", "copy",
             "-map", "1:a:0", "-c:a", "libopus", "-b:a", "96k", self.destination
         ]
         subprocess.run(cmd)
-        for path in file_names:
-            if os.path.exists("chunks/" + path):
-                os.remove("chunks/" + path)
-        if os.path.exists("chunks/inputs.txt"):
-            os.remove("chunks/inputs.txt")
+        try:
+            scene_manager.clean_up()
+            os.remove(self.temp_location / file_name)
+            for index, scene in enumerate(scene_manager.scenes):
+                os.remove(self.temp_location / (str(index) + ".mp4"))
+            os.rmdir(self.temp_location)
+        except Exception:
+            sys.exit("Unexpected error deleting temporary files. Please check the temporary folder " + str(self.temp_location))

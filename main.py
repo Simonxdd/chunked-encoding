@@ -1,6 +1,9 @@
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import hashlib
+import base64
 import argparse
 import re
 import shutil
@@ -12,6 +15,7 @@ import video
 
 
 def main():
+    # --- Parse args ---
     parser = argparse.ArgumentParser(description='test description #1')
     # input/output
     parser.add_argument("-i", help="Path to the input file.", type=valid_path, required=True, metavar="FILE")
@@ -26,13 +30,17 @@ def main():
                         help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis.", metavar="WxH")
     args = parser.parse_args()
 
+    # --- double-check ffmpeg ---
+
     if not shutil.which("ffmpeg"):
         sys.exit("no ffmpeg version was found on this system.")
+
+    # --- determine crop, start, hdr, etc. ---
+    # Refactor soon!
     with ThreadPoolExecutor() as executor:
         future_crop = executor.submit(video.get_crop, args.i) if args.autocrop else None
         future_start = executor.submit(video.get_video_start, args.i) if args.findstart else None
         future_hdr = executor.submit(video.get_hdr, args.i)
-
     crop = future_crop.result() if future_crop else None
     start = future_start.result() if future_start else 0.0
     hdr = future_hdr.result()
@@ -52,9 +60,23 @@ def main():
     else:
         workers = 1
 
-    process = EncodingProcess(args.i, args.o, workers, crop, resolution, start, length, fps, hdr)
+    temp_location = get_file_hash_b64(args.i, resolution, start)
+    if not Path(temp_location).exists():
+        os.mkdir(temp_location)
+
+    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr)
     process.start()
 
+
+def get_file_hash_b64(path, resolution, start):
+    sha_256 = hashlib.sha256()
+    with open(path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha_256.update(byte_block)
+    sha_256.update(str(resolution).encode("utf-8"))
+    sha_256.update(str(start).encode('utf-8'))
+    digest = sha_256.digest()
+    return ".temp-" + base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
 
 def valid_path(path_str):
     p = Path(path_str)
