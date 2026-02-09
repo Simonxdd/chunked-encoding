@@ -106,11 +106,11 @@ class EncodingProcess:
         while True:
             scenes = scene_manager.scenes
             alive_threads = sum(1 for t in worker_threads if t.is_alive())
-            finished_length = sum(s.get_length() for s in scenes if s.done_processing)
-            progress = min(finished_length / self.length, 1.0)
+            total_processed_length = sum(s.get_length() for s in scenes if s.done_processing)
+            progress = min(total_processed_length / self.length, 1.0)
             if scene_manager.most_recent_timestamp:
-                fps = (finished_length / (scene_manager.most_recent_timestamp - scene_manager.start_timestamp)) * self.source_fps
-                eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - finished_length) * self.source_fps) / fps), 0)))
+                fps = (scene_manager.finished_length / (scene_manager.most_recent_timestamp - scene_manager.start_timestamp)) * self.source_fps
+                eta = time.strftime('%H:%M:%S', time.gmtime(round((((self.length - total_processed_length) * self.source_fps) / fps), 0)))
             else:
                 fps = 0
                 eta = "--:--:--"

@@ -12,6 +12,7 @@ class SceneManager:
         self.scenes = []
         self.start_timestamp = time()
         self.most_recent_timestamp = None
+        self.finished_length = 0.0
         self.lock = threading.Condition()
         self.scd_finished = False
 
@@ -58,6 +59,7 @@ class SceneManager:
             scene.done_processing = True
             scene.is_processing = False
             self.most_recent_timestamp = time()
+            self.finished_length += scene.get_length()
             if self.scd_finished:
                 self.save_scenes()
 
