@@ -62,9 +62,9 @@ class EncodingProcess:
 
     def scene_detection(self, scene_manager):
         if self.crop:
-            filter_str = self.crop + ",select='gt(scene,0.3)',showinfo"
+            filter_str = self.crop + ",select='gt(scene,0.25)',showinfo"
         else:
-            filter_str = "select='gt(scene,0.3)',showinfo"
+            filter_str = "select='gt(scene,0.25)',showinfo"
         scene_detection_process = subprocess.Popen(
             [
                 "ffmpeg", "-i", self.source, "-nostdin",
