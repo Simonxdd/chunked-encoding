@@ -4,6 +4,7 @@ class Scene:
         self.end = None
         self.is_processing = False
         self.done_processing = False
+        self.error_count = 0
 
     def end_scene(self, end):
         self.end = end

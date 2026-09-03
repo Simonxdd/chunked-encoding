@@ -94,20 +94,25 @@ class EncodingProcess:
             scene, index = scene_manager.request_scene()
             if scene is None:
                 break
-            x, y = self.resolution
-            if self.crop:
-                filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
-            else:
-                filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
-            result = subprocess.run(
-                ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin",
-                 "-loglevel", "fatal",
-                 "-filter_complex", filter_complex, "-an", "-map", "[v]",
-                 "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le",
-                 f"{self.temp_location / str(index)}.mp4"], capture_output=True
-            )
-            if result.returncode == 0:
-                scene_manager.scene_finished(scene)
+            try:
+                x, y = self.resolution
+                if self.crop:
+                    filter_complex = "[0:v:0]" + self.crop + ",scale=" + str(x) + ":" + str(y) + "[v]"
+                else:
+                    filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
+                result = subprocess.run(
+                    ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", self.source, "-nostdin",
+                     "-loglevel", "fatal",
+                     "-filter_complex", filter_complex, "-an", "-map", "[v]",
+                     "-c:v", "libsvtav1", "-preset", "4", "-pix_fmt", "yuv420p10le",
+                     f"{self.temp_location / str(index)}.mp4"], capture_output=True
+                )
+                if result.returncode == 0:
+                    scene_manager.scene_finished(scene)
+                else:
+                    scene.error_count = scene.error_count + 1
+            finally:
+                scene_manager.release_scene(scene)
 
     def update_display(self, worker_threads, scene_manager):
         sys.stdout.write("\033\n")
@@ -139,14 +144,14 @@ class EncodingProcess:
                     break
 
     def mux(self, scene_manager):
-        file_name = "videos.txt"
-        with open(self.temp_location / file_name, 'w') as f:
+        videos_file = "videos.txt"
+        with open(self.temp_location / videos_file, 'w') as f:
             for index, scene in enumerate(scene_manager.scenes):
                 f.write(f"file '{index}.mp4'\n")
 
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-loglevel", "fatal",
-            "-i", self.temp_location / file_name, "-ss", str(self.content_start_time),
+            "-i", self.temp_location / videos_file, "-ss", str(self.content_start_time),
             "-i", self.source, "-map", "0:v:0",
             "-c:v", "copy",
             "-map", "1:a:0", "-c:a", "libopus", "-b:a", "96k", self.destination
@@ -154,7 +159,7 @@ class EncodingProcess:
         subprocess.run(cmd)
         try:
             scene_manager.clean_up()
-            os.remove(self.temp_location / file_name)
+            os.remove(self.temp_location / videos_file)
             for index, scene in enumerate(scene_manager.scenes):
                 os.remove(self.temp_location / (str(index) + ".mp4"))
             os.rmdir(self.temp_location)

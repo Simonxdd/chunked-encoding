@@ -51,6 +51,11 @@ class SceneManager:
                     return None, None
                 self.lock.wait()
 
+    def release_scene(self, scene):
+        with self.lock:
+            scene.is_processing = False
+            self.lock.notify_all()
+
     def unprocessed_scenes(self):
         return any(not scene.done_processing for scene in self.scenes)
 

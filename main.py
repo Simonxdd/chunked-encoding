@@ -20,7 +20,7 @@ def main():
     # input/output
     parser.add_argument("-i", help="Path to the input file.", type=valid_path, required=True, metavar="FILE")
     parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
-    parser.add_argument("-w", type=int, help="Set the number of workers. Default is 4.", metavar="N")
+    parser.add_argument("-w", type=int, help="Set the number of workers.", metavar="N")
     # autocrop, resolution limit
     parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=False,
                         help="Enable or disable automatic cropping.")
