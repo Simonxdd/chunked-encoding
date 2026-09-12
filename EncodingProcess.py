@@ -262,10 +262,10 @@ class EncodingProcess:
         subprocess.run(cmd)
         try:
             pass
-            #scene_manager.clean_up()
-            #os.remove(self.temp_location / videos_file)
-            #for index, scene in enumerate(scene_manager.scenes):
-            #    os.remove(self.temp_location / (str(index) + ".mp4"))
-            #os.rmdir(self.temp_location)
+            scene_manager.clean_up()
+            os.remove(self.temp_location / videos_file)
+            for index, scene in enumerate(scene_manager.scenes):
+                os.remove(self.temp_location / (str(index) + ".mp4"))
+            os.rmdir(self.temp_location)
         except Exception:
             sys.exit("Unexpected error deleting temporary files. Please check the temporary folder " + str(self.temp_location))
