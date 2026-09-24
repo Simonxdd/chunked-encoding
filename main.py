@@ -8,19 +8,26 @@ import argparse
 import re
 import shutil
 from EncodingProcess import EncodingProcess
-
+import importlib
 import time
 
 import video
+from video_encoders.svtav1 import SvtAv1
 
 
 def main():
+    if not shutil.which("ffmpeg"):
+        sys.exit("no ffmpeg version was found on this system.")
     # --- Parse args ---
     parser = argparse.ArgumentParser(description='test description #1')
     # input/output
     parser.add_argument("-i", help="Path to the input file.", type=valid_path, required=True, metavar="FILE")
     parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
     parser.add_argument("-w", type=int, help="Set the number of workers.", metavar="N")
+    # video
+    parser.add_argument("--crf", type=float, help="Set the video encoding CRF value.")
+    parser.add_argument("--preset", type=int, help="Set the video encoding preset.")
+
     # autocrop, resolution limit
     parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=False,
                         help="Enable or disable automatic cropping.")
@@ -30,10 +37,7 @@ def main():
                         help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis.", metavar="WxH")
     args = parser.parse_args()
 
-    # --- double-check ffmpeg ---
-
-    if not shutil.which("ffmpeg"):
-        sys.exit("no ffmpeg version was found on this system.")
+    video_encoder = SvtAv1(crf=args.crf, preset=args.preset)
 
     # --- determine crop, start, hdr, etc. ---
     # Refactor soon!
@@ -64,7 +68,7 @@ def main():
     if not Path(temp_location).exists():
         os.mkdir(temp_location)
 
-    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr)
+    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr, video_encoder)
     process.start()
 
 
