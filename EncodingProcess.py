@@ -1,15 +1,13 @@
 import threading
-import signal
 import sys
 from pathlib import Path
-from Scene import *
 import time
 import os
-from concurrent.futures import ThreadPoolExecutor
 from SceneManager import SceneManager
-from scene_detection import scene_detection, scene_detection_global
-from worker import worker
+from src.scene_detection import scene_detection_v2
+from src.worker import worker
 import subprocess
+from src.ConsoleOutput import ConsoleOutput
 
 class EncodingProcess:
 
@@ -28,11 +26,12 @@ class EncodingProcess:
         self.stop_event = threading.Event()
         # variables
         self.passed_time = "--:--:--"
+        self.console = ConsoleOutput(self.resolution, self.hdr, self.length, self.source_fps)
 
     def start(self):
         scene_manager = SceneManager(self.temp_location, self.content_start_time)
         worker_threads = []
-        scene_detection_thread = threading.Thread(target=scene_detection, args=(self, scene_manager))
+        scene_detection_thread = threading.Thread(target=scene_detection_v2, args=(self, scene_manager, self.hdr))
         scene_detection_thread.daemon = True
         ui_thread = threading.Thread(target=self.update_display, args=(worker_threads, scene_manager,))
         try:
@@ -63,8 +62,6 @@ class EncodingProcess:
                 t.join(timeout=1)
 
     def update_display(self, worker_threads, scene_manager):
-        sys.stdout.write("\033\n")
-        sys.stdout.write("\033\n")
         while not self.stop_event.wait(1):
             scenes = scene_manager.scenes
             all_scenes_done_processing = not any(not scene.done_processing for scene in scenes)
@@ -78,15 +75,17 @@ class EncodingProcess:
                 fps = 0
                 eta = "--:--:--"
             self.passed_time = time.strftime('%H:%M:%S', time.gmtime(time.time() - scene_manager.start_timestamp))
-            sys.stdout.write("\033[F" * 2)
-            sys.stdout.write(f"\033[KScenes {sum(1 for s in scenes if s.done_processing)}/{len(scenes)} Workers {alive_threads} ")
-            sys.stdout.write(f"\033[K{self.resolution[0]}x{self.resolution[1]} {'HDR' if self.hdr else 'SDR'}\n")
-            bar_width = 60
-            filled = int(progress / 1.0 * bar_width)
-            bar = "#" * filled + ">" + "-" * (bar_width - filled - 1)
-            line = f"[{self.passed_time}] [{bar[:bar_width]}] {round(progress*100,1)}% {round(fps,1)} fps, eta {eta}"
-            sys.stdout.write(f"\033[K{line}\n")
-            sys.stdout.flush()
+            
+            self.console.update_display(
+                worker_threads,
+                scene_manager,
+                self.passed_time,
+                total_processed_length,
+                progress,
+                fps,
+                eta
+            )
+            
             if all_scenes_done_processing:
                 if alive_threads < 1:
                     break

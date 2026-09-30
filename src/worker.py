@@ -12,7 +12,7 @@ def worker(instance, scene_manager):
             else:
                 filter_complex = "[0:v:0]scale=" + str(x) + ":" + str(y) + "[v]"
             video_encoding_args = instance.video_coding.get_ffmpeg_args()
-            cmd = ["ffmpeg", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", instance.source, "-nostdin",
+            cmd = ["ffmpeg", "-hwaccel", "auto", "-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", instance.source, "-nostdin",
                     "-loglevel", "warning", "-pix_fmt", "yuv420p10le",
                     "-filter_complex", filter_complex, "-an", "-map", "[v]"
                    ]
@@ -21,7 +21,7 @@ def worker(instance, scene_manager):
             result = subprocess.run(cmd, capture_output=True, text=True)
             for line in str(result.stderr).split("\n"):
                 if instance.video_coding.warning_filter(line):
-                    print(line)
+                    instance.console.print(line)
             if result.returncode == 0:
                 scene_manager.scene_finished(scene)
             else:

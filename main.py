@@ -8,11 +8,9 @@ import argparse
 import re
 import shutil
 from EncodingProcess import EncodingProcess
-import importlib
-import time
 
 import video
-from video_encoders.svtav1 import SvtAv1
+from src.video_encoders.svtav1 import SvtAv1
 
 
 def main():
@@ -37,7 +35,7 @@ def main():
                         help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis.", metavar="WxH")
     args = parser.parse_args()
 
-    video_encoder = SvtAv1(crf=args.crf, preset=args.preset)
+    video_coding = SvtAv1(crf=args.crf, preset=args.preset)
 
     # --- determine crop, start, hdr, etc. ---
     # Refactor soon!
@@ -68,19 +66,34 @@ def main():
     if not Path(temp_location).exists():
         os.mkdir(temp_location)
 
-    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr, video_encoder)
+    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr, video_coding)
     process.start()
 
 
-def get_file_hash_b64(path, resolution, start):
+def get_file_hash_b64(path, resolution, start, sample_size=4096):
     sha_256 = hashlib.sha256()
-    with open(path, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha_256.update(byte_block)
+    stat = os.stat(path)
+    file_size = stat.st_size
+    metadata = f"{path}-{file_size}-{stat.st_mtime}"
+    sha_256.update(metadata.encode("utf-8"))
+    if file_size > 0:
+        with open(path, "rb") as f:
+            # Sample the Header (Start)
+            sha_256.update(f.read(sample_size))
+
+            # Sample the Midpoint
+            if file_size > sample_size * 2:
+                f.seek(file_size // 2)
+                sha_256.update(f.read(sample_size))
+
+            # Sample the Footer (End - where MKV indices live)
+            if file_size > sample_size:
+                f.seek(-min(sample_size, file_size), os.SEEK_END)
+                sha_256.update(f.read(sample_size))
     sha_256.update(str(resolution).encode("utf-8"))
     sha_256.update(str(start).encode('utf-8'))
     digest = sha_256.digest()
-    return ".temp-" + base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
+    return "temp-" + base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
 
 def valid_path(path_str):
     p = Path(path_str)
