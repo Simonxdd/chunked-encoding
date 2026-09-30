@@ -29,7 +29,7 @@ class SvtAv1:
     DEFAULT_PRESET = 5
 
     def __init__(self, crf: Union[int, float] = None, preset: int = None, args_str: str = None):
-        # Base psychovisual parameters (merged from SVT-AV1-HDR)
+        # Default params, including base psychovisual params (merged from SVT-AV1-HDR)
         self.params = {
             "ac-bias": 1.0,
             "sharpness": 1,
@@ -42,7 +42,8 @@ class SvtAv1:
             "enable-qm": 1,
             "qm-min": 5,
             "qm-max": 10,
-            # "noise-norm-strength": 1, Currently missing in mainline
+            "keyint": 300,
+            # "noise-norm-strength": 1 Currently missing in mainline
         }
 
         # Set crf and preset from args or defaults
