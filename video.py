@@ -10,7 +10,7 @@ def get_crop_backup(source):
     try:
         result = subprocess.run(
             [
-                "ffmpeg", "-skip_frame", "nokey", "-i", source, "-nostdin",
+                "ffmpeg", "-i", source, "-nostdin",
                 "-vf", "cropdetect=64:2:0",
                 "-t", "00:10:00",
                 "-f", "null", "/dev/null"
@@ -43,12 +43,12 @@ def get_crop(source):
 
         start_buffer, end_buffer = total_duration * 0.05, total_duration * 0.95
         scan_duration = end_buffer - start_buffer
-        num_points, frames_per_point = 6, 8
+        num_points, frames_per_point = 12, 10
         interval = scan_duration / (num_points + 1)
 
         def probe_point(source, timestamp, frames_per_point):
             result = subprocess.run([
-                "ffmpeg", "-ss", str(timestamp), "-skip_frame", "nokey", "-i", source, "-nostdin",
+                "ffmpeg", "-ss", str(timestamp), "-i", source, "-nostdin",
                 "-frames:v", str(frames_per_point), "-vf", "cropdetect=64:2:0", "-f", "null", "-"
             ], stderr=subprocess.PIPE,
                 errors="replace",
