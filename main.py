@@ -1,74 +1,96 @@
 import os
+import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 from pathlib import Path
 import hashlib
 import base64
-import argparse
-import re
 import shutil
-from EncodingProcess import EncodingProcess
 
-import video
-from src.video_encoders.svtav1 import SvtAv1
+from src.models.config import Config, parse_cli_args
+from src.worker import worker
+from src.scene_detection import scene_detection_v2
+
+from src.models.video import VideoAttributes
+from src.models.scene_management import SceneManager
+from src.ui.console import console
 
 
 def main():
-    if not shutil.which("ffmpeg"):
-        sys.exit("no ffmpeg version was found on this system.")
-    # --- Parse args ---
-    parser = argparse.ArgumentParser(description='test description #1')
-    # input/output
-    parser.add_argument("-i", help="Path to the input file.", type=valid_path, required=True, metavar="FILE")
-    parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
-    parser.add_argument("-w", type=int, help="Set the number of workers.", metavar="N")
-    # video
-    parser.add_argument("--crf", type=float, help="Set the video encoding CRF value.")
-    parser.add_argument("--preset", type=int, help="Set the video encoding preset.")
+    if not shutil.which("ffmpeg"): sys.exit("FFmpeg was not found on this system.")
 
-    # autocrop, resolution limit
-    parser.add_argument("--autocrop", action=argparse.BooleanOptionalAction, default=False,
-                        help="Enable or disable automatic cropping.")
-    parser.add_argument("--findstart", action=argparse.BooleanOptionalAction, default=False,
-                        help="Automatically find the start of the video using audio and video analysis.")
-    parser.add_argument("--res", type=resolution_type,
-                        help="Set resolution limit (e.g. 1920x1080). Downscales to longest axis.", metavar="WxH")
-    args = parser.parse_args()
+    args = parse_cli_args()
 
-    video_coding = SvtAv1(crf=args.crf, preset=args.preset)
+    stop_event = threading.Event()
+    ui_thread = threading.Thread(target=console.display_routine, args=(stop_event,))
+    ui_thread.start()
 
-    # --- determine crop, start, hdr, etc. ---
-    # Refactor soon!
-    with ThreadPoolExecutor() as executor:
-        future_crop = executor.submit(video.get_crop, args.i) if args.autocrop else None
-        future_start = executor.submit(video.get_video_start, args.i) if args.findstart else None
-        future_hdr = executor.submit(video.get_hdr, args.i)
-    crop = future_crop.result() if future_crop else None
-    start = future_start.result() if future_start else 0.0
-    hdr = future_hdr.result()
-    video_json = video.get_characteristics(args.i)
-    length = float(video_json["format"]["duration"])
-    fps = video_json["streams"][0]["r_frame_rate"]
-    if "/" in fps:
-        num, den = fps.split("/")
-        fps = float(num) / float(den)
-    else:
-        fps = float(fps)
+    config = Config(args)
 
-    resolution = video.get_output_resolution(args.i, crop, args.res)
+    temp_location = Path(get_file_hash_b64(config.input_file, config.video_attributes.resolution, 0))
+    if not Path(temp_location).exists(): os.mkdir(temp_location)
 
-    if args.w:
-        workers = max(args.w, 1)
-    else:
-        workers = 1
+    scene_manager = SceneManager(temp_location, 0)
 
-    temp_location = get_file_hash_b64(args.i, resolution, start)
-    if not Path(temp_location).exists():
-        os.mkdir(temp_location)
+    scene_detection_thread = threading.Thread(target=scene_detection_v2, args=(config.video_attributes, scene_manager, stop_event))
+    scene_detection_thread.daemon = True
 
-    process = EncodingProcess(args.i, args.o, temp_location, workers, crop, resolution, start, length, fps, hdr, video_coding)
-    process.start()
+    worker_threads = []
+    try:
+        if not scene_manager.scd_finished:
+            scene_detection_thread.start()
 
+        for i in range(0, config.workers):
+            t = threading.Thread(target=worker, args=(config, stop_event, temp_location, scene_manager))
+            t.start()
+            worker_threads.append(t)
+
+        console.start(scene_manager, config, worker_threads)
+
+        while scene_detection_thread.is_alive():
+            scene_detection_thread.join(timeout=1)
+        for t in worker_threads:
+            while t.is_alive():
+                t.join(timeout=1)
+        console.stop()
+        if not stop_event.is_set():
+            mux(scene_manager, temp_location, config.video_attributes, config.output_file)
+            console.print("Encoding finished.")
+        stop_event.set()
+        while ui_thread.is_alive():
+            ui_thread.join(timeout=1)
+    except KeyboardInterrupt:
+        stop_event.set()
+        console.print("Shutting down... Please consider the temp folder or restart to resume.")
+        while ui_thread.is_alive():
+            ui_thread.join(timeout=1)
+        for t in worker_threads:
+            t.join(timeout=1)
+
+def mux(scene_manager: SceneManager, temp_location: Path, video: VideoAttributes, destination: Path):
+    videos_file = "videos.txt"
+    with open(temp_location / videos_file, 'w') as f:
+        for index, scene in enumerate(scene_manager.scenes):
+            f.write(f"file '{index}.mp4'\n")
+
+    cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-loglevel", "fatal",
+        "-i", temp_location / videos_file, "-ss", str(0),
+        "-i", video.source, "-map", "0:v:0",
+        "-c:v", "copy",
+        "-map", "1:a:0", "-c:a", "libopus", "-b:a", "96k", destination
+    ]
+    subprocess.run(cmd)
+    try:
+        pass
+        scene_manager.clean_up()
+        os.remove(temp_location / videos_file)
+        for index, scene in enumerate(scene_manager.scenes):
+            os.remove(temp_location / (str(index) + ".mp4"))
+        os.rmdir(temp_location)
+    except Exception:
+        sys.exit("Unexpected error deleting temporary files. Please check the temporary folder " + str(temp_location))
 
 def get_file_hash_b64(path, resolution, start, sample_size=4096):
     sha_256 = hashlib.sha256()
@@ -94,18 +116,6 @@ def get_file_hash_b64(path, resolution, start, sample_size=4096):
     sha_256.update(str(start).encode('utf-8'))
     digest = sha_256.digest()
     return "temp-" + base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
-
-def valid_path(path_str):
-    p = Path(path_str)
-    if not p.exists():
-        raise argparse.ArgumentTypeError(f"Path does not exist: {path_str}")
-    return p.as_posix()
-
-def resolution_type(string):
-    if not re.match(r"^\d+x\d+$", string):
-        raise argparse.ArgumentTypeError(f"Resolution '{string}' must be in WIDTHxHEIGHT format (e.g., 1920x1080)")
-    width, height = map(int, string.split('x'))
-    return width, height
 
 if __name__ == '__main__':
     main()

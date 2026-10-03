@@ -1,52 +1,23 @@
 import subprocess
 import re
+import threading
 from collections import deque
 
-def scene_detection_old(instance, scene_manager, is_hdr):
-    """
-    Legacy scene detection using a scene-change threshold, primarily optimized for SDR content.
-    Will be deleted soon as it's no longer needed.
-    """
-    if instance.crop:
-        filter_str = instance.crop + ",select='gt(scene,0.25)',showinfo"
-    else:
-        filter_str = "select='gt(scene,0.25)',showinfo"
-    scene_detection_process = subprocess.Popen(
-        [
-            "ffmpeg", "-i", instance.source, "-nostdin",
-            "-filter:v", filter_str,
-            "-f", "null", "-"
-        ],
-        stderr=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,  # We only care about stderr for showinfo
-        text=True,
-        errors="replace"
-    )
-    try:
-        for line in iter(scene_detection_process.stderr.readline, ""):
-            if '] n:' in line:
-                match = re.search(r"pts_time:(\d+\.\d+)", line)
-                if match:
-                    timestamp = float(match.group(1))
-                    if timestamp > instance.content_start_time:
-                        scene_manager.add_scene(timestamp)
-    finally:
-        scene_detection_process.stderr.close()
-        scene_detection_process.wait()
-        scene_manager.finish_last_scene(instance.length)
+from src.models.scene_management import SceneManager
+from src.models.video import VideoAttributes
 
-def scene_detection_v2(instance, scene_manager, is_hdr):
+# min and max length based on recommended AV1 keyints.
+MIN_LEN = 1.0
+MAX_LEN = 10.0
+LOOKAHEAD_WINDOW = 60.0
+
+def scene_detection_v2(video: VideoAttributes, scene_manager: SceneManager, stop_event: threading.Event):
     """
     Smarter scene detection using rolling-window dynamic programming.
     Written with the help of generative AI.
     """
-    # min and max length based on recommended AV1 keyints.
-    # TODO: Reconsider how this works for high-fps content.
-    MIN_LEN = 1.0
-    MAX_LEN = 10.0
     #TODO: Evaluate more precise cost functions for SDR and HDR
-    CUT_PENALTY = 5.0 if is_hdr else 9.5
-    LOOKAHEAD_WINDOW = 60.0
+    cut_penalty = 5.0 if video.hdr else 9.5
 
     buffer = []
     last_cut_time = 0.0
@@ -72,7 +43,7 @@ def scene_detection_v2(instance, scene_manager, is_hdr):
                 nodes=nodes,
                 min_len=MIN_LEN,
                 max_len=MAX_LEN,
-                cut_penalty=CUT_PENALTY,
+                cut_penalty=cut_penalty,
                 horizon_limit=horizon_limit,
                 is_eof=is_eof
             )
@@ -83,14 +54,14 @@ def scene_detection_v2(instance, scene_manager, is_hdr):
             if is_eof:
                 # EOF FLUSH: Commit ALL remaining cuts in the optimal path
                 for cut_time, _ in cuts:
-                    if cut_time > instance.content_start_time:
+                    if cut_time > video.start_time:
                         scene_manager.add_scene(cut_time)
                 buffer.clear()
                 break
             else:
                 # STREAMING: Commit ONLY the first cut in the optimal path
                 first_cut_time, _ = cuts[0]
-                if first_cut_time > instance.content_start_time:
+                if first_cut_time > video.start_time:
                     scene_manager.add_scene(first_cut_time)
 
                 last_cut_time = first_cut_time
@@ -98,25 +69,28 @@ def scene_detection_v2(instance, scene_manager, is_hdr):
                 # Loop continues if remaining buffer still spans >= LOOKAHEAD_WINDOW
 
     # 1. Read FFmpeg frame scores and process in rolling windows
-    for timestamp, score in _stream_ffmpeg_scdet_scores(instance):
+    for timestamp, score in _stream_ffmpeg_scdet_scores(video, stop_event):
         buffer.append((timestamp, score))
         if buffer[-1][0] - last_cut_time >= LOOKAHEAD_WINDOW:
             evaluate_and_commit_buffer(is_eof=False)
 
+    if stop_event.is_set():
+        return
+
     # 2. Flush remaining buffer and commit all tail cuts at EOF
     evaluate_and_commit_buffer(is_eof=True)
-    scene_manager.finish_last_scene(instance.length)
+    scene_manager.finish_last_scene(video.length)
 
-def _stream_ffmpeg_scdet_scores(instance):
+def _stream_ffmpeg_scdet_scores(video: VideoAttributes, stop_event: threading.Event):
     """Executes FFmpeg and yields (timestamp, scdet_score) tuples as they are parsed."""
-    if instance.crop:
-        filter_str = f"{instance.crop},scdet=s=0:t=2,metadata=print,showinfo"
+    if video.crop:
+        filter_str = f"{video.crop},scdet=s=0:t=2,metadata=print,showinfo"
     else:
         filter_str = "scdet=s=0:t=2,metadata=print,showinfo"
 
     process = subprocess.Popen(
         [
-            "ffmpeg", "-hwaccel", "auto", "-i", instance.source, "-nostdin",
+            "ffmpeg", "-hwaccel", "auto", "-i", video.source, "-nostdin",
             "-filter:v", filter_str,
             "-f", "null", "-"
         ],
@@ -129,6 +103,8 @@ def _stream_ffmpeg_scdet_scores(instance):
     current_time = None
     try:
         for line in process.stderr:
+            if stop_event.is_set():
+                break
             time_match = re.search(r"pts_time:([\d\.]+)", line)
             if time_match:
                 current_time = float(time_match.group(1))
@@ -139,6 +115,12 @@ def _stream_ffmpeg_scdet_scores(instance):
                 current_time = None
     finally:
         process.stderr.close()
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
         process.wait()
 
 def _solve_penalized_dp(nodes, min_len, max_len, cut_penalty, horizon_limit=None, is_eof=False):

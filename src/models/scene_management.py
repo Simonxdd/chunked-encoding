@@ -1,5 +1,5 @@
 import json
-from Scene import *
+from pathlib import Path
 from time import *
 import threading
 import os
@@ -7,7 +7,7 @@ import os
 filename = "scenes.json"
 
 class SceneManager:
-    def __init__(self, temp_location, content_start_time):
+    def __init__(self, temp_location: Path, content_start_time):
         self.temp_location = temp_location
         self.scenes = []
         self.start_timestamp = time()
@@ -85,3 +85,33 @@ class SceneManager:
 
     def clean_up(self):
         os.remove(self.temp_location / filename)
+
+class Scene:
+    def __init__(self, start):
+        self.start = start
+        self.end = None
+        self.is_processing = False
+        self.done_processing = False
+        self.error_count = 0
+
+    def end_scene(self, end):
+        self.end = end
+
+    def is_complete(self):
+        return self.end is not None
+
+    def get_length(self):
+        if self.end is not None:
+            return self.end - self.start
+        else:
+            return float("inf")
+
+    def serialize(self):
+        return self.__dict__
+
+    @classmethod
+    def deserialize(cls, data):
+        start_value = data.pop('start')
+        instance = cls(start_value)
+        instance.__dict__.update(data)
+        return instance

@@ -1,10 +1,9 @@
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import concurrent.futures
 import subprocess
 import json
 import re
 import sys
-
 
 def get_crop_backup(source):
     try:
@@ -113,7 +112,6 @@ def get_characteristics(source):
     output = json.loads(subprocess.check_output(cmd).decode('utf-8'))
     return output
 
-
 def get_video_start(source):
     cmd = [
         "ffmpeg", "-i", source, "-nostdin", "-hide_banner", "-nostats",
@@ -163,3 +161,25 @@ def get_hdr(source):
             return False
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error running ffprobe to check eotf: {e}", file=sys.stderr)
+
+class VideoAttributes:
+    def __init__(self, source, autocrop, res):
+        self.source = source
+        with ThreadPoolExecutor() as executor:
+            future_crop = executor.submit(get_crop, source) if autocrop else None
+            #future_start = executor.submit(video.get_video_start, args.i) if args.findstart else None
+            future_hdr = executor.submit(get_hdr, source)
+        self.crop = future_crop.result() if future_crop else None
+        #start = future_start.result() if future_start else 0.0
+        self.hdr = future_hdr.result()
+        video_json = get_characteristics(source)
+        self.length = float(video_json["format"]["duration"])
+        fps = video_json["streams"][0]["r_frame_rate"]
+        if "/" in fps:
+            num, den = fps.split("/")
+            fps = float(num) / float(den)
+        else:
+            fps = float(fps)
+        self.source_fps = fps
+        self.resolution = get_output_resolution(source, self.crop, res)
+        self.start_time = 0
