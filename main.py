@@ -2,7 +2,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 import hashlib
 import base64
@@ -55,7 +54,7 @@ def main():
                 t.join(timeout=1)
         console.stop()
         if not stop_event.is_set():
-            mux(scene_manager, temp_location, config.video_attributes, config.output_file)
+            mux(scene_manager, temp_location, config, config.output_file)
             console.print("Encoding finished.")
         stop_event.set()
         while ui_thread.is_alive():
@@ -68,19 +67,22 @@ def main():
         for t in worker_threads:
             t.join(timeout=1)
 
-def mux(scene_manager: SceneManager, temp_location: Path, video: VideoAttributes, destination: Path):
+def mux(scene_manager: SceneManager, temp_location: Path, config: Config, destination: Path):
+    video = config.video_attributes
+    audio = config.audio_mappings
     videos_file = "videos.txt"
     with open(temp_location / videos_file, 'w') as f:
         for index, scene in enumerate(scene_manager.scenes):
             f.write(f"file '{index}.mp4'\n")
 
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-loglevel", "fatal",
-        "-i", temp_location / videos_file, "-ss", str(0),
-        "-i", video.source, "-map", "0:v:0",
-        "-c:v", "copy",
-        "-map", "1:a:0", "-c:a", "libopus", "-b:a", "96k", destination
+        "ffmpeg", "-y", "-loglevel", "fatal",
+        "-i", str(video.source), "-f", "concat",
+        "-safe", "0", "-i", str(temp_location / videos_file),
+        "-map", "1:v:0", "-c:v", "copy",
     ]
+    cmd.extend(audio.audio_args)
+    cmd.append(str(destination))
     subprocess.run(cmd)
     try:
         pass
@@ -90,7 +92,7 @@ def mux(scene_manager: SceneManager, temp_location: Path, video: VideoAttributes
             os.remove(temp_location / (str(index) + ".mp4"))
         os.rmdir(temp_location)
     except Exception:
-        sys.exit("Unexpected error deleting temporary files. Please check the temporary folder " + str(temp_location))
+        console.print("Unexpected error deleting temporary files. Please check the temporary folder " + str(temp_location))
 
 def get_file_hash_b64(path, resolution, start, sample_size=4096):
     sha_256 = hashlib.sha256()

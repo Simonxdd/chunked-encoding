@@ -8,6 +8,8 @@ from enum import Enum, auto
 from src.models.config import Config
 from src.models.scene_management import SceneManager
 
+# TODO: overhaul this mess soon
+
 RESET = "\033[0m"
 BOLD_WHITE = "\033[1;97m"
 GREEN = "\033[92m"
@@ -61,12 +63,16 @@ class ConsoleOutput:
 
     def display_routine(self, stop_event: threading.Event):
         while not stop_event.wait(self.refresh_rate):
+            lines = []
             if self.state == self.ProcessingState.ANALYZING:
-                line_1 = f"{GRAY}Analyzing...{RESET}"
+                lines.append(f"{GRAY}Analyzing...{RESET}")
                 timer = f"--:--:--"
                 fps = "-.--"
                 eta = "--:--:--"
             if self.state == self.ProcessingState.ENCODING:
+                for line in self.config.audio_mappings.formatted_mappings:
+                    lines.append(f"{GRAY}{line}{RESET}")
+                lines.append(f"{GRAY}{self.config.video_encoding.NAME} params: {self.config.video_encoding.get_raw_args()}{RESET}")
                 scenes = self.scene_manager.scenes
                 video_attributes = self.config.video_attributes
                 total_processed_length = sum(s.get_length() for s in scenes if s.done_processing)
@@ -82,17 +88,17 @@ class ConsoleOutput:
                 workers = f"Workers {sum(1 for t in self.worker_threads if t.is_alive())}"
                 resolution = f"{video_attributes.resolution[0]}x{video_attributes.resolution[1]}"
                 hdr = "HDR" if video_attributes.hdr else "SDR"
-                line_1 = f"{GREEN}{scenes}{RESET} {BLUE}{workers}{RESET} {GRAY}{resolution} {hdr}{RESET}"
+                lines.append(f"{GREEN}{scenes}{RESET} {BLUE}{workers}{RESET} {GRAY}{resolution} {hdr}{RESET}")
             if self.state == self.ProcessingState.MUXING:
-                line_1 = f"{GRAY}Muxing...{RESET}"
+                lines.append(f"{GRAY}Muxing...{RESET}")
                 timer = f"--:--:--"
                 fps = "-.--"
                 eta = "--:--:--"
             line_2_left = f"[{timer}] "
             line_2_right = f" {format_progress(self.progress)}%, {fps} fps, eta {str(eta)} "
             bar_width = shutil.get_terminal_size().columns - len(line_2_left) - len(line_2_right) - 5
-            line_2 = line_2_left + self.get_bar(bar_width) + line_2_right
-            self.update_persistent([line_1, line_2])
+            lines.append(line_2_left + self.get_bar(bar_width) + line_2_right)
+            self.update_persistent(lines)
         self.clear_persistent()
 
     def update_persistent(self, lines: list[str]):

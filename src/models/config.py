@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import re
 
+from src.models.audio import AudioMappings
 from src.models.video_encoders.svtav1 import SvtAv1
 from src.models.video import VideoAttributes
 
@@ -30,6 +31,7 @@ def parse_cli_args():
     parser.add_argument("--autocrop", action=arg_bool, default=False, help="Enable or disable automatic cropping.")
     parser.add_argument("--res", type=resolution_type, help="Set resolution limit (e.g. 1920x1080).", metavar="WxH")
     parser.add_argument("-v", "--video-params", type=str, help="Parameters for chosen video encoder. Defaults vary by encoder.")
+    parser.add_argument("-a", "--audio-params", type=str, help="Parameters for audio mapping and encoding.")
 
     return parser.parse_args()
 
@@ -42,5 +44,6 @@ class Config:
         self.low_power = args.low_power
         self.ten_bit = args.ten_bit
 
+        self.audio_mappings = AudioMappings(self.input_file, args.audio_params)
         self.video_attributes = VideoAttributes(self.input_file, args.autocrop, args.res)
         self.video_encoding = SvtAv1(args.video_params)
