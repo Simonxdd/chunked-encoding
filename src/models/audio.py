@@ -152,14 +152,14 @@ def test_audio_mappings(generated_args, input_file):
             for line in e.stderr.splitlines()
             if "Error" in line or "Invalid" in line
         ]
-        err_msg = error_lines[-1] if error_lines else "FFmpeg execution failed."
-        return False, [f"Error: {err_msg}"]
+        err_msg = error_lines[0] if error_lines else "FFmpeg execution failed."
+        raise Exception(err_msg)
     except FileNotFoundError:
-        return False, ["Error: ffmpeg executable not found."]
+        raise Exception("FFmpeg executable not found.")
 
     # Parse stderr for output audio stream declarations
     formatted_mappings = parse_output_audio_mappings(stderr_output)
-    return True, formatted_mappings
+    return formatted_mappings
 
 def parse_output_audio_mappings(stderr_text):
     lines = stderr_text.splitlines()
@@ -226,9 +226,6 @@ def parse_output_audio_mappings(stderr_text):
 class AudioMappings:
     def __init__(self, source, audio_args):
         processed_args = build_audio_args(source, audio_args)
-        success, formatted_mappings = test_audio_mappings(processed_args, source)
-        if not success:
-            # Throw Exception here soon lol
-            pass
+        formatted_mappings = test_audio_mappings(processed_args, source)
         self.audio_args = processed_args
         self.formatted_mappings = formatted_mappings

@@ -25,7 +25,12 @@ def main():
     ui_thread = threading.Thread(target=console.display_routine, args=(stop_event,))
     ui_thread.start()
 
-    config = Config(args)
+    try:
+        config = Config(args)
+    except Exception as e:
+        console.print(e)
+        stop_event.set()
+        sys.exit(1)
 
     temp_location = Path(get_file_hash_b64(config.input_file, config.video_attributes.resolution, 0))
     if not Path(temp_location).exists(): os.mkdir(temp_location)
