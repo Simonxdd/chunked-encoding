@@ -43,7 +43,6 @@ class SceneManager:
                 available_scenes = [s for s in self.scenes if s.is_complete()
                                     and not s.is_processing and not s.done_processing]
                 if available_scenes:
-                    available_scenes.sort(key=lambda s: s.get_length(), reverse=True)
                     scene = available_scenes[0]
                     scene.is_processing = True
                     return scene, self.scenes.index(scene)
