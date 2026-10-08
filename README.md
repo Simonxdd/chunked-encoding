@@ -23,14 +23,14 @@ Supports auto bit rate when specifying libopus with "-c:a libopus"
 
 Worker count. Currently defaults to 1.
 
-- `--low_power true/false`
-Use background task policy for workers on macOS (default is false).
-- `--ten_bit true/false`
-Use 10 bit video encoding (default is true).
-- `--hwaccel true/false`
-Toggle hardware acceleration (default is true).
-- `--auto-crop true/false`
-Automatically crop input video (ffmpeg cropdetect).
+- `--low_power`
+Use background task policy for workers on macOS.
+- `--disable-ten-bit`
+Disable 10 bit encoding.
+- `--disable-hwaccel`
+Disable hardware accelerated decoding.
+- `--autocrop`
+Automatically crop input video.
 - `--res WxH`
 Resolution limit for video. Preserves aspect ratio and scales by longest axis. 
 

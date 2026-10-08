@@ -20,15 +20,14 @@ def resolution_type(string):
 
 def parse_cli_args():
     parser = argparse.ArgumentParser(description="Chunked Encoding indev")
-    arg_bool = argparse.BooleanOptionalAction
 
     parser.add_argument("-i", help="Path to the input file.", type=valid_file_type, required=True, metavar="FILE")
     parser.add_argument("-o", help="Path to the output file.", type=Path, required=True, metavar="FILE")
     parser.add_argument("-w", type=int, help="Set the number of workers.", metavar="N", default=1)
-    parser.add_argument("--low_power", action=arg_bool, default=False, help="Enable low power mode (macOS only).")
-    parser.add_argument("--ten_bit", action=arg_bool, default=True, help="Enable 10 bit encoding. On by default.")
-    parser.add_argument("--hwaccel", action=arg_bool, default=True, help="Enable hardware accelerated decoding. On by default.")
-    parser.add_argument("--autocrop", action=arg_bool, default=False, help="Enable or disable automatic cropping.")
+    parser.add_argument("--low_power", dest="low_power", action="store_true", default=False, help="Enable low power mode (macOS only).")
+    parser.add_argument("--disable-ten-bit", dest="ten_bit", action="store_false", default=True, help="Disable 10 bit encoding")
+    parser.add_argument("--disable-hwaccel", dest="hwaccel", action="store_false", default=True, help="Disable hardware accelerated decoding")
+    parser.add_argument("--autocrop", dest="autocrop", action="store_true", default=False, help="Enable automatic cropping.")
     parser.add_argument("--res", type=resolution_type, help="Set resolution limit (e.g. 1920x1080).", metavar="WxH")
     parser.add_argument("-v", "--video-params", type=str, help="Parameters for chosen video encoder. Defaults vary by encoder.")
     parser.add_argument("-a", "--audio-params", type=str, help="Parameters for audio mapping and encoding.")
