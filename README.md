@@ -26,21 +26,17 @@ Big Buck Bunny 1080p looped 5x (70 minutes), Apple M3 Pro
 
 ### Execution
 
+Using ffmpeg v9.0.2, av1an 0.5.2_3 and svt-av1 4.2.0 via homebrew
+
 `time av1an -i bbb_70m.mp4 -o bbb_70m-av1an.mkv -w 2 -a "-c:a libopus -b:a 256k -mapping_family 1 -sn" -v "--preset 4 --crf 35 --ac-bias 1.0 --sharpness 1 --tf-strength 1 --enable-variance-boost 1 --enable-qm 1 --qm-min 5 --qm-max 10 --keyint 300"`
 
 `time python3 main.py -i bbb_70m.mp4 -o bbb_70m-ce.mkv -w 2 -a "-c:a libopus -b:a 256k -mapping_family 1" -v "--preset 4 --crf 35 --ac-bias 1.0 --sharpness 1 --tf-strength 1 --enable-variance-boost 1 --enable-qm 1 --qm-min 5 --qm-max 10 --keyint 300"`
 
 ### XPSNR
 
-`ffmpeg -i bbb_70m.mp4 -colorspace bt709 -color_primaries bt709 -color_trc bt709 -i bbb_70m-av1an.mkv -lavfi \                                                            
-"[0:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[ref]; \ 
- [1:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[main]; \                   
- [main][ref]xpsnr=stats_file=xpsnr_av1an.log:ts_sync_mode=nearest" -an -f null -`
+`ffmpeg -i bbb_70m.mp4 -colorspace bt709 -color_primaries bt709 -color_trc bt709 -i bbb_70m-av1an.mkv -lavfi "[0:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[ref];[1:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[main];[main][ref]xpsnr=stats_file=xpsnr_av1an.log:ts_sync_mode=nearest" -an -f null -`
 
-`ffmpeg -i bbb_70m.mp4 -i bbb_70m-ce.mkv -lavfi \
-"[0:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[ref]; \
- [1:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[main]; \
- [main][ref]xpsnr=stats_file=xpsnr_ce.log:ts_sync_mode=nearest" -t 60 -an -f null -`
+`ffmpeg -i bbb_70m.mp4 -i bbb_70m-ce.mkv -lavfi "[0:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[ref];[1:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p10le[main];[main][ref]xpsnr=stats_file=xpsnr_ce.log:ts_sync_mode=nearest" -t 60 -an -f null -`
 </details>
 
 ## Usage
