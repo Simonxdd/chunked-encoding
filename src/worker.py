@@ -25,6 +25,7 @@ def worker(config: Config, stop_event: threading.Event, temp_location, scene_man
             cmd.extend(["ffmpeg"])
             if config.hwaccel: cmd.extend(["-hwaccel", "auto"])
             cmd.extend(["-y", "-ss", str(scene.start), "-to", str(scene.end), "-i", config.input_file, "-nostdin",
+                        "-fps_mode", "passthrough", "-enc_time_base", config.video_attributes.time_base,
                     "-loglevel", "warning", "-filter_complex", filter_complex, "-an", "-map", "[v]"
                    ])
             cmd.extend(video_encoding_args)

@@ -4,6 +4,7 @@ import subprocess
 import json
 import re
 import sys
+from dataclasses import dataclass
 
 def get_crop_backup(source):
     try:
@@ -108,7 +109,7 @@ def get_output_resolution(source, crop, limit):
 
 def get_characteristics(source):
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-select_streams", "v:0",
-           "-show_entries","format=duration:stream=r_frame_rate", source]
+           "-show_entries","format=duration:stream=r_frame_rate,time_base", source]
     output = json.loads(subprocess.check_output(cmd).decode('utf-8'))
     return output
 
@@ -162,7 +163,16 @@ def get_hdr(source):
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error running ffprobe to check eotf: {e}", file=sys.stderr)
 
+@dataclass
 class VideoAttributes:
+    source: str
+    crop: str
+    hdr: bool
+    length: float
+    time_base: str
+    source_fps: float
+    resolution: tuple[int, int]
+    start_time: float
     def __init__(self, source, autocrop, res):
         self.source = source
         with ThreadPoolExecutor() as executor:
@@ -175,6 +185,7 @@ class VideoAttributes:
         video_json = get_characteristics(source)
         self.length = float(video_json["format"]["duration"])
         fps = video_json["streams"][0]["r_frame_rate"]
+        self.time_base = video_json.get('streams', [{}])[0].get('time_base', '1/1000')
         if "/" in fps:
             num, den = fps.split("/")
             fps = float(num) / float(den)
