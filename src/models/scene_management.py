@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
-from time import *
+from time import time
 import threading
 import os
 
 filename = "scenes.json"
 
 class SceneManager:
+    FILE_ENDING = ".mp4"
     def __init__(self, temp_location: Path, content_start_time):
         self.temp_location = temp_location
         self.scenes = []
@@ -17,9 +18,10 @@ class SceneManager:
         self.scd_finished = False
 
         if os.path.exists(self.temp_location / filename):
-            self.load_scenes()
-        else:
-            self.scenes.append(Scene(content_start_time))
+            if self.load_scenes():
+                self.scd_finished = True
+                return
+        self.scenes.append(Scene(content_start_time))
 
     def add_scene(self, timestamp):
         with self.lock:
@@ -72,15 +74,19 @@ class SceneManager:
         with open(self.temp_location / filename, "w") as f:
             json.dump(serialized, f, indent=4)
 
-
-    def load_scenes(self):
+    def load_scenes(self) -> bool:
         with open(self.temp_location / filename, "r", encoding="utf-8") as f:
             serialized = json.load(f)
             self.scenes = [Scene.deserialize(item) for item in serialized]
-            self.scd_finished = True
+            for index, scene in enumerate(self.scenes):
+                if scene.done_processing:
+                    if not os.path.exists(self.temp_location / (str(index) + self.FILE_ENDING)):
+                        self.scenes = []
+                        return False
             for scene in self.scenes:
                 if not scene.done_processing and scene.is_processing:
                     scene.is_processing = False
+            return True
 
     def clean_up(self):
         os.remove(self.temp_location / filename)

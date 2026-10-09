@@ -30,7 +30,7 @@ def worker(config: Config, stop_event: threading.Event, temp_location, scene_man
                    ])
             cmd.extend(video_encoding_args)
             if config.ten_bit: cmd.extend(["-pix_fmt", "yuv420p10le"])
-            cmd.extend([f"{temp_location / str(index)}.mp4"])
+            cmd.extend([f"{temp_location / str(index)}{scene_manager.FILE_ENDING}"])
             result = subprocess.run(cmd, capture_output=True, text=True)
             for line in str(result.stderr).split("\n"):
                 if config.video_encoding.warning_filter(line):

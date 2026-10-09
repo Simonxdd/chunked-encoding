@@ -31,14 +31,12 @@ def main():
         console.print(e)
         stop_event.set()
         sys.exit(1)
-
-    temp_location = Path(get_file_hash_b64(config.input_file, config.video_attributes.resolution, 0))
+    temp_location = Path(get_file_hash(config))
     if not Path(temp_location).exists(): os.mkdir(temp_location)
 
     scene_manager = SceneManager(temp_location, 0)
 
     scene_detection_thread = threading.Thread(target=scene_detection_v2, args=(config.video_attributes, scene_manager, stop_event))
-    scene_detection_thread.daemon = True
 
     worker_threads = []
     try:
@@ -65,8 +63,8 @@ def main():
         while ui_thread.is_alive():
             ui_thread.join(timeout=1)
     except KeyboardInterrupt:
-        stop_event.set()
         console.print("Shutting down... Please consider the temp folder or restart to resume.")
+        stop_event.set()
         while ui_thread.is_alive():
             ui_thread.join(timeout=1)
         for t in worker_threads:
@@ -78,7 +76,7 @@ def mux(scene_manager: SceneManager, temp_location: Path, config: Config, destin
     videos_file = "videos.txt"
     with open(temp_location / videos_file, 'w') as f:
         for index, scene in enumerate(scene_manager.scenes):
-            f.write(f"file '{index}.mp4'\n")
+            f.write(f"file '{index}{scene_manager.FILE_ENDING}'\n")
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "fatal",
@@ -94,33 +92,23 @@ def mux(scene_manager: SceneManager, temp_location: Path, config: Config, destin
         scene_manager.clean_up()
         os.remove(temp_location / videos_file)
         for index, scene in enumerate(scene_manager.scenes):
-            os.remove(temp_location / (str(index) + ".mp4"))
+            os.remove(temp_location / (str(index) + scene_manager.FILE_ENDING))
         os.rmdir(temp_location)
     except Exception:
         console.print("Unexpected error deleting temporary files. Please check the temporary folder " + str(temp_location))
 
-def get_file_hash_b64(path, resolution, start, sample_size=4096):
+def get_file_hash(config):
+    stat = os.stat(config.input_file)
     sha_256 = hashlib.sha256()
-    stat = os.stat(path)
-    file_size = stat.st_size
-    metadata = f"{path}-{file_size}-{stat.st_mtime}"
-    sha_256.update(metadata.encode("utf-8"))
-    if file_size > 0:
-        with open(path, "rb") as f:
-            # Sample the Header (Start)
-            sha_256.update(f.read(sample_size))
 
-            # Sample the Midpoint
-            if file_size > sample_size * 2:
-                f.seek(file_size // 2)
-                sha_256.update(f.read(sample_size))
+    # Only hashing the name, size and mdate should be adequate
+    sha_256.update(str(config.input_file).encode())
+    sha_256.update(str(stat.st_size).encode())
+    sha_256.update(str(stat.st_mtime).encode())
 
-            # Sample the Footer (End - where MKV indices live)
-            if file_size > sample_size:
-                f.seek(-min(sample_size, file_size), os.SEEK_END)
-                sha_256.update(f.read(sample_size))
-    sha_256.update(str(resolution).encode("utf-8"))
-    sha_256.update(str(start).encode('utf-8'))
+    sha_256.update(str(config.ten_bit).encode())
+    sha_256.update(str(repr(config.video_attributes)).encode())
+    sha_256.update(str(repr(config.video_encoding)).encode())
     digest = sha_256.digest()
     return "temp-" + base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
 
