@@ -17,10 +17,10 @@ class SvtAv1:
             # "kf-tf-strength": 1, Currently missing in mainline
             "enable-variance-boost": 1,
             # "noise-norm-strength": 1, Currently missing in mainline
-            #"hbd-mds": 1, # Setting this to 1 causes segfaults on my Mac.
+            # "hbd-mds": 1, # Setting this to 1 causes segfaults on my Mac.
             # "sharp-tx": 1, Currently missing in mainline
             "enable-qm": 1,
-            "qm-min": 5,
+            "qm-min": 6,
             "qm-max": 10,
             "keyint": 300
             # "noise-norm-strength": 1 Currently missing in mainline
